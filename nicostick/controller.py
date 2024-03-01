@@ -1,17 +1,16 @@
-import logging
-
-import socket
 import asyncio
-
+import logging
+import socket
 import xml.etree.ElementTree as ET
 
-from .protocol import Stick3Protocol,OpCodes
 from .models import Stick3State, Stick3ZoneState
+from .protocol import OpCodes, Stick3Protocol
 
 _LOGGER = logging.getLogger(__name__)
 
-class Controller():
-    def __init__(self, address,udp_port=2430, tcp_port=2431):
+
+class Controller:
+    def __init__(self, address, udp_port=2430, tcp_port=2431):
         self._address = address
         self._udp_port = udp_port
         self._tcp_port = tcp_port
@@ -23,12 +22,12 @@ class Controller():
         _LOGGER.debug('Sending UDP: %s', data.hex())
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.sendto(data, (self._address, self._udp_port))
-            #data=s.recvfrom(1024)
-            #print('Received UDP:', data.hex())
+            # data=s.recvfrom(1024)
+            # print('Received UDP:', data.hex())
 
     async def open_tcp(self):
         self._reader, self._writer = await asyncio.open_connection(self._address, self._tcp_port)
-        #self.tcp_read_handler = asyncio.create_task(self.tcp_handler())
+        # self.tcp_read_handler = asyncio.create_task(self.tcp_handler())
 
     async def send_tcp(self, data):
         _LOGGER.debug('Sending TCP: %s', data.hex())
@@ -49,40 +48,40 @@ class Controller():
                     break
                 continue
             _LOGGER.debug('Received TCP: %s', data.hex())
-            (id,op_code,decoded_data) = self._protocol.decode(data)
-            if op_code == OpCodes.OpFileData :
+            (id, op_code, decoded_data) = self._protocol.decode(data)
+            if op_code == OpCodes.OpFileData:
                 await self.handle_file_data(decoded_data)
             elif op_code == OpCodes.OpZoneStatus:
                 await self.handle_zone_status(decoded_data)
             elif op_code == OpCodes.OpPollReply:
-                await self.handle_poll_reply(id,decoded_data)
+                await self.handle_poll_reply(id, decoded_data)
 
     async def start(self):
         self._keep_running = True
         self._tcp_runner_task = asyncio.create_task(self.tcp_runner())
-        #self.tcp_read_handler = asyncio.create_task(self.tcp_handler())
+        # self.tcp_read_handler = asyncio.create_task(self.tcp_handler())
         await asyncio.sleep(0.5)
 
     async def stop(self):
         self._keep_running = False
         self._writer.close()
         await self._writer.wait_closed()
-        #self.tcp_read_handler.cancel()
-        await self._tcp_runner_task      
+        # self.tcp_read_handler.cancel()
+        await self._tcp_runner_task
 
-    async def handle_file_data(self,decoded_data):
+    async def handle_file_data(self, decoded_data):
         # self.file_name is not None exception?
-        (file_name,file_end,data_size,file_data) = decoded_data
+        (file_name, file_end, data_size, file_data) = decoded_data
         _LOGGER.debug(f"File Name: {file_name} File End: {file_end} Data Size: {file_data[:data_size]}")
         self.file_data += file_data[:data_size]
         # docu says file_end is 0x00 but it is 0xFF for me
-        if(file_end == 0xFF):
+        if file_end == 0xFF:
             self.file_name = None
             self.file_future.set_result(self.file_data)
             self.file_data = b''
             self.file_future = None
-        elif(file_end==1):
-            fr = self._protocol.file_request_encode(self.file_name,1,512)
+        elif file_end == 1:
+            fr = self._protocol.file_request_encode(self.file_name, 1, 512)
             self._writer.write(fr)
             await self._writer.drain()
         else:
@@ -90,17 +89,31 @@ class Controller():
             self.file_future.set_exception(ValueError(f"Invalid file_end: {file_end}"))
             self.file_data = b''
             self.file_future = None
-            #raise ValueError(f"Invalid file_end: {file_end}")
+            # raise ValueError(f"Invalid file_end: {file_end}")
 
-    async def handle_zone_status(self,decoded_data):
-        _LOGGER.debug('Zone State: %s',decoded_data)
-        (stamp,zone_id,running_scene,scene_state,dimmer,speed,color_rgb,color_sat,extra_color1,extra_color2,extra_color3) = decoded_data
-        zone_state = Stick3ZoneState(running_scene,scene_state,dimmer,speed,color_rgb,color_sat,extra_color1,extra_color2,extra_color3)
+    async def handle_zone_status(self, decoded_data):
+        _LOGGER.debug('Zone State: %s', decoded_data)
+        (
+            stamp,
+            zone_id,
+            running_scene,
+            scene_state,
+            dimmer,
+            speed,
+            color_rgb,
+            color_sat,
+            extra_color1,
+            extra_color2,
+            extra_color3,
+        ) = decoded_data
+        zone_state = Stick3ZoneState(
+            running_scene, scene_state, dimmer, speed, color_rgb, color_sat, extra_color1, extra_color2, extra_color3
+        )
         self._state.zone_states[zone_id] = zone_state
-   
-    async def handle_poll_reply(self,id,decoded_data):
-        _LOGGER.debug('Device data: %s',decoded_data)
-        (stick_name,firmware_version,serial,state,tcp_port,form_factor) = decoded_data
+
+    async def handle_poll_reply(self, id, decoded_data):
+        _LOGGER.debug('Device data: %s', decoded_data)
+        (stick_name, firmware_version, serial, state, tcp_port, form_factor) = decoded_data
         self._state.id = id
         self._state.name = stick_name.decode('ascii')
         self._state.firmware_version = firmware_version
@@ -111,11 +124,11 @@ class Controller():
 
     async def start_scene(self, scene_nr, zone_sync_id, dimmer_val, speed_val, color_val):
         data = self._protocol.scene_trigger_encode(scene_nr, zone_sync_id, 1, dimmer_val, speed_val, color_val)
-        #await self.send_udp(data)
+        # await self.send_udp(data)
         await self.send_tcp(data)
 
     async def read_file(self, file_name):
-        if hasattr(self,'file_name') and self.file_name :
+        if hasattr(self, 'file_name') and self.file_name:
             raise ValueError('File name already set.')
         self.file_name = file_name
         self.file_data = b''
@@ -124,15 +137,15 @@ class Controller():
         data = self._protocol.file_request_encode(file_name, 0, 512)
         await self.send_tcp(data)
         return await self.file_future
-    
-    async def send_query_zone_status(self,zone_id:int):
-        data = self._protocol.zone_status_encode(zone_id,0)
+
+    async def send_query_zone_status(self, zone_id: int):
+        data = self._protocol.zone_status_encode(zone_id, 0)
         await self.send_tcp(data)
-    
-    async def send_poll(self,ID=b'LSAG_ALL'):
+
+    async def send_poll(self, ID=b'LSAG_ALL'):
         data = self._protocol.poll_request_encode(ID)
         await self.send_tcp(data)
-    
+
     async def initialize(self):
         await self.send_poll()
         await asyncio.sleep(0.5)
@@ -143,10 +156,11 @@ class Controller():
         # TODO this is a hack, we should wait for the zone status to come in
         await asyncio.sleep(2)
         self._initialized = True
+
     @property
     def id(self):
         return self._state.id
-    
+
     @property
     def name(self):
         return self._state.name
@@ -158,23 +172,23 @@ class Controller():
     @property
     def zones(self):
         return self._state.zones
-    
+
     @property
     def scenes(self):
         return self._state.scenes
-    
-    def get_zone_state(self,zone_id):
+
+    def get_zone_state(self, zone_id):
         return self._state.zone_states[zone_id]
-    
-    def get_running_scene(self,zone_id):
-        try :
+
+    def get_running_scene(self, zone_id):
+        try:
             i = self._state.zone_states[zone_id].running_scene
-            return i,self._state.scenes[i]
+            return i, self._state.scenes[i]
         except KeyError:
             _LOGGER.error(f"Zone {zone_id} not found")
-            return None,None
-    
-    async def set_scene(self,zone_id,scene_name=None,scene_index=None):
+            return None, None
+
+    async def set_scene(self, zone_id, scene_name=None, scene_index=None):
         try:
             if scene_index is None:
                 scene_index = list(self._state.scenes.keys())[list(self._state.scenes.values()).index(scene_name)]
@@ -185,22 +199,19 @@ class Controller():
         except KeyError:
             _LOGGER.warning(f"Zone {zone_id} not found")
 
-
     async def read_show_map_file(self):
-        file_data= await self.read_file('Show1/show_map.xml')
+        file_data = await self.read_file('Show1/show_map.xml')
         root = ET.fromstring(file_data)
         # We don't know how to work the channels so skip that for now
         # Scenes
-        scenes={}
+        scenes = {}
         for item in root.findall('Scenes/item'):
-            scenes[int(item.attrib['index'])]=item.find('Scene').attrib['name']
+            scenes[int(item.attrib['index'])] = item.find('Scene').attrib['name']
         # Pages don't need them
         # Zones
-        zones={}
+        zones = {}
         for item in root.findall('Zones/item'):
-            zones[int(item.attrib['index'])]=item.find('Zone').attrib['name']
+            zones[int(item.attrib['index'])] = item.find('Zone').attrib['name']
 
-        self._state.scenes = scenes    
+        self._state.scenes = scenes
         self._state.zones = zones
-
-
