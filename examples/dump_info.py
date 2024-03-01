@@ -1,16 +1,15 @@
-import logging
 import asyncio
-
+import logging
 from sys import argv
+
 from nicostick.controller import Controller
-import xml.etree.ElementTree as ET
 
 logging.basicConfig(level=logging.DEBUG)
 
 
 async def main(address):
 
-    ctrl= Controller(address)
+    ctrl = Controller(address)
     await ctrl.start()
     await ctrl.initialize()
     await asyncio.sleep(2)
@@ -23,9 +22,7 @@ async def main(address):
     await asyncio.sleep(5)
     await ctrl.stop()
     await asyncio.sleep(5)
-    
 
 
- 
 if __name__ == "__main__":
     asyncio.run(main(argv[1]))

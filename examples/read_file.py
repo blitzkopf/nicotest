@@ -1,11 +1,12 @@
 import asyncio
-from nicostick.controller import Controller
 import xml.etree.ElementTree as ET
+
+from nicostick.controller import Controller
 
 
 async def main():
 
-    ctrl= Controller('172.25.115.69')
+    ctrl = Controller('172.25.115.69')
 
     await ctrl.start()
     file_data = await ctrl.read_file('Show1/show_map.xml')
@@ -16,6 +17,7 @@ async def main():
         print(item.attrib)
         print(item.find('Scene').attrib['name'])
     await ctrl.stop()
- 
+
+
 if __name__ == "__main__":
     asyncio.run(main())
