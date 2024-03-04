@@ -215,3 +215,7 @@ class Controller:
 
         self._state.scenes = scenes
         self._state.zones = zones
+
+    async def update(self):
+        for zone_id in self._state.zones.keys():
+            await self.send_query_zone_status(zone_id)
