@@ -19,6 +19,6 @@ repos:
         types: [python]
       - id: ruff
         name: ruff
-        entry: poetry run ruff . --fix
+        entry: poetry run ruff check . --fix
         language: system
         types: [python]

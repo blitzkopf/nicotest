@@ -16,7 +16,7 @@ class OpCodes(Enum):
     OpUiStatusV2 = 0x23  # System Status (Scene, Screen, Leds…)
     OpMasterVersion = 0x09  # System Info (Version, Name…)
     OpTcpGetSalt = 0x47  # Authentication : Salt
-    OpTcpAuthentificate = 0x48  # Authentication : Challenge
+    OpTcpAuthentificate = 0x48  # Authentication : Challenge [thats how it is spelled in the doc]
     OpButtonStick = 0x65  # Send Button Simulation
     OpSceneState = 0x6D  # Scene Triggering
     # OpGetScenesNames = 0x0117 # Get scenes names of the CSA SHOW (Siudi10/Stick5)
@@ -73,8 +73,15 @@ class Stick3Protocol:
         XHL_VERSION = 0x12
         return struct.pack('<8sHI2x', ID, OpCodes.OpPoll.value, XHL_VERSION)
 
-    def tcp_get_salt_encode(self, salt):
-        return struct.pack('<8sHQ6x', ID, OpCodes.OpTcpGetSalt.value, salt)
+    def tcp_get_salt_encode(self, stamp):
+        return struct.pack('<8sHQ6x', ID, OpCodes.OpTcpGetSalt.value, stamp)
+
+    def tcp_authenticate_encode(self, stamp, login, salt, signature):
+        return struct.pack('<8sHQ32s32s32s6x', ID, OpCodes.OpTcpAuthentificate.value, stamp, login, salt, signature)
+
+    def auth_message_encode(self, ID, opcode, stamp, login, salt):
+        print(ID, opcode, stamp, login, salt)
+        return struct.pack('<8sHQ32s32s', ID, opcode, stamp, login, salt)
 
     def decode(self, data):
         _LOGGER.debug('Decoding: %s', data.hex())
@@ -86,6 +93,10 @@ class Stick3Protocol:
             return (id, opcode, self.decode_zone_status(data[10:]))
         elif opcode == OpCodes.OpPollReply:
             return (id, opcode, self.decode_poll_reply(data[10:]))
+        elif opcode == OpCodes.OpTcpGetSalt:
+            return (id, opcode, self.decode_salt_reply(data[10:]))
+        elif opcode == OpCodes.OpTcpAuthentificate:
+            return (id, opcode, self.decode_auth_reply(data[10:]))
         return (id, opcode, data[10:])
 
     def decode_file_data(self, data):
@@ -143,3 +154,15 @@ class Stick3Protocol:
         return [stick_name, firmware_version, serial, state, tcp_port, 0]
         # (stick_name,firmware_version,serial,state,tcp_port,form_factor)=struct.unpack('<10s10xH4xI10xB5xHB5x',data)
         # return ([stick_name,firmware_version,serial,state,tcp_port,form_factor])
+
+    def decode_salt_reply(self, data):
+        _LOGGER.debug('Decoding salt reply: %s', data.hex())
+        ## Salt is suposed tu padded with two bytes but it is not
+        (stamp, status, salt) = struct.unpack('<QI32s', data)
+        return [stamp, status, salt]
+
+    def decode_auth_reply(self, data):
+        _LOGGER.debug('Decoding auth reply: %s', data.hex())
+        ## Salt is suposed tu padded with two bytes but it is not
+        (stamp, auth_result_code) = struct.unpack('<QI', data)
+        return [stamp, auth_result_code]
