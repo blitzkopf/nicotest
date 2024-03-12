@@ -1,8 +1,12 @@
 import asyncio
+import hashlib
+import hmac
 import logging
 import socket
+import time
 import xml.etree.ElementTree as ET
 
+from .const import HARD_BASE_PASSWORD
 from .models import Stick3State, Stick3ZoneState
 from .protocol import OpCodes, Stick3Protocol
 
@@ -49,12 +53,17 @@ class Controller:
                 continue
             _LOGGER.debug('Received TCP: %s', data.hex())
             (id, op_code, decoded_data) = self._protocol.decode(data)
+            _LOGGER.debug('OpCode: %s', op_code.name)
             if op_code == OpCodes.OpFileData:
                 await self.handle_file_data(decoded_data)
             elif op_code == OpCodes.OpZoneStatus:
                 await self.handle_zone_status(decoded_data)
             elif op_code == OpCodes.OpPollReply:
                 await self.handle_poll_reply(id, decoded_data)
+            elif op_code == OpCodes.OpTcpGetSalt:
+                await self.handle_salt_reply(id, decoded_data)
+            elif op_code == OpCodes.OpTcpAuthentificate:
+                await self.handle_auth_reply(id, decoded_data)
 
     async def start(self):
         self._keep_running = True
@@ -122,6 +131,28 @@ class Controller:
         self._state.tcp_port = tcp_port
         self._state.form_factor = form_factor
 
+    async def handle_salt_reply(self, id, decoded_data):
+        (stamp, status, salt) = decoded_data
+        _LOGGER.debug('Salt: %s', salt.hex())
+        self._salt = salt
+        self._stamp = stamp
+        ## status 0x11 is out of memory, 0x00 is ok deal with later
+        self._status = status
+        if hasattr(self, '_salt_future') and self._salt_future:
+            fut = self._salt_future
+            self._salt_future = None
+            fut.set_result(salt)
+
+    async def handle_auth_reply(self, id, decoded_data):
+        (stamp, auth_result_code) = decoded_data
+        _LOGGER.debug('Stamp: %d', stamp)
+        _LOGGER.debug('Auth result: %d', auth_result_code)
+        self._auth_result_code = auth_result_code
+        if hasattr(self, '_auth_future') and self._auth_future:
+            fut = self._auth_future
+            self._auth_future = None
+            fut.set_result(auth_result_code)
+
     async def start_scene(self, scene_nr, zone_sync_id, dimmer_val, speed_val, color_val):
         data = self._protocol.scene_trigger_encode(scene_nr, zone_sync_id, 1, dimmer_val, speed_val, color_val)
         # await self.send_udp(data)
@@ -145,6 +176,47 @@ class Controller:
     async def send_poll(self, ID=b'LSAG_ALL'):
         data = self._protocol.poll_request_encode(ID)
         await self.send_tcp(data)
+
+    async def send_get_salt(self, ID=b'LSAG_ALL'):
+        data = self._protocol.tcp_get_salt_encode(time.time_ns())
+        await self.send_tcp(data)
+
+    async def get_salt(self, ID=b'LSAG_ALL'):
+        if hasattr(self, '_salt_future') and self._salt_future:
+            raise ValueError('Already waiting for salt.')
+        loop = asyncio.get_running_loop()
+        self._salt_future = loop.create_future()
+        await self.send_get_salt(ID)
+        return await self._salt_future
+
+    async def send_auth(self, ID, stamp, login, salt, signature):
+        data = self._protocol.tcp_authenticate_encode(stamp, login, salt, signature)
+        await self.send_tcp(data)
+
+    async def authenticate(self, ID, login, password):
+        if hasattr(self, '_auth_future') and self._auth_future:
+            raise ValueError('Already waiting for auth.')
+        salt = await self.get_salt(ID)
+        key = bytes(HARD_BASE_PASSWORD, 'latin-1') + bytes(password, 'latin-1')
+
+        message = self._protocol.auth_message_encode(ID, OpCodes.OpTcpAuthentificate.value, self._stamp, login, salt)
+        signature = hmac.new(key, message, hashlib.sha256).digest()
+
+        loop = asyncio.get_running_loop()
+        self._auth_future = loop.create_future()
+        await self.send_auth(ID, self._stamp, login, salt, signature)
+        auth_rc = await self._auth_future
+        # Result code value can be (in actual firmware revision 2017-07-07)
+        # - XHL_Error_XHL_CommunicationError (34)
+        # 24
+        # - XHL_Error_RTFM (24)
+        # - XHL_Error_OperationNotPermitted (31)
+        # - XHL_Error_DeviceInternalError (105)
+        # - XHL_Error_System_PermissionDenied (10)
+        # - XHL_Error_System_OutOfMemory (11)
+        # - XHL_Error_InvalidLoginPassword (100)
+        # - XHL_Error_NoError (0)
+        return auth_rc
 
     async def initialize(self):
         await self.send_poll()
