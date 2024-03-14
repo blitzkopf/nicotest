@@ -6,7 +6,7 @@ from nicostick.controller import Controller
 
 async def main():
 
-    ctrl = Controller('172.25.115.69')
+    ctrl = Controller('172.25.115.69', password='z')
 
     await ctrl.start()
     file_data = await ctrl.read_file('Show1/show_map.xml')

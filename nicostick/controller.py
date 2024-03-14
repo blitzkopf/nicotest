@@ -14,10 +14,11 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class Controller:
-    def __init__(self, address, udp_port=2430, tcp_port=2431):
+    def __init__(self, address, udp_port=2430, tcp_port=2431, password=None):
         self._address = address
         self._udp_port = udp_port
         self._tcp_port = tcp_port
+        self._password = password
         self._protocol = Stick3Protocol()
         self._state = Stick3State()
 
@@ -31,9 +32,16 @@ class Controller:
 
     async def open_tcp(self):
         self._reader, self._writer = await asyncio.open_connection(self._address, self._tcp_port)
+        if self._password:
+            self._need_authentication = True
         # self.tcp_read_handler = asyncio.create_task(self.tcp_handler())
 
     async def send_tcp(self, data):
+        if self._need_authentication:
+            # turn off need_authentication so we don't get stuck in a loop
+            # I guess there is possibility of a race condition here
+            self._need_authentication = False
+            await self.authenticate(b'Stick_3A', b'remote', self._password)
         _LOGGER.debug('Sending TCP: %s', data.hex())
         self._writer.write(data)
         await self._writer.drain()
@@ -52,18 +60,7 @@ class Controller:
                     break
                 continue
             _LOGGER.debug('Received TCP: %s', data.hex())
-            (id, op_code, decoded_data) = self._protocol.decode(data)
-            _LOGGER.debug('OpCode: %s', op_code.name)
-            if op_code == OpCodes.OpFileData:
-                await self.handle_file_data(decoded_data)
-            elif op_code == OpCodes.OpZoneStatus:
-                await self.handle_zone_status(decoded_data)
-            elif op_code == OpCodes.OpPollReply:
-                await self.handle_poll_reply(id, decoded_data)
-            elif op_code == OpCodes.OpTcpGetSalt:
-                await self.handle_salt_reply(id, decoded_data)
-            elif op_code == OpCodes.OpTcpAuthentificate:
-                await self.handle_auth_reply(id, decoded_data)
+            await self.handle_reply(data)
 
     async def start(self):
         self._keep_running = True
@@ -77,6 +74,20 @@ class Controller:
         await self._writer.wait_closed()
         # self.tcp_read_handler.cancel()
         await self._tcp_runner_task
+
+    async def handle_reply(self, data):
+        (id, op_code, decoded_data) = self._protocol.decode(data)
+        _LOGGER.debug('OpCode: %s', op_code.name)
+        if op_code == OpCodes.OpFileData:
+            await self.handle_file_data(decoded_data)
+        elif op_code == OpCodes.OpZoneStatus:
+            await self.handle_zone_status(decoded_data)
+        elif op_code == OpCodes.OpPollReply:
+            await self.handle_poll_reply(id, decoded_data)
+        elif op_code == OpCodes.OpTcpGetSalt:
+            await self.handle_salt_reply(id, decoded_data)
+        elif op_code == OpCodes.OpTcpAuthentificate:
+            await self.handle_auth_reply(id, decoded_data)
 
     async def handle_file_data(self, decoded_data):
         # self.file_name is not None exception?
@@ -216,6 +227,8 @@ class Controller:
         # - XHL_Error_System_OutOfMemory (11)
         # - XHL_Error_InvalidLoginPassword (100)
         # - XHL_Error_NoError (0)
+        if auth_rc != 0:
+            raise ValueError(f'Authentication failed with code {auth_rc}')
         return auth_rc
 
     async def initialize(self):
