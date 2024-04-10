@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "nicostick"
-version = "0.0.3"
+version = "0.1.0"
 description = "Python package for interfacing with the Nicolaudie Stick3-DE DMX controller over Ethernet"
 authors = ["Yngvi Thor Sigurjonsson <blitzkopf@gmail.com>"]
 readme = "README.md"
