@@ -80,7 +80,7 @@ class Stick3Protocol:
         return struct.pack('<8sHQ32s32s32s6x', ID, OpCodes.OpTcpAuthentificate.value, stamp, login, salt, signature)
 
     def auth_message_encode(self, ID, opcode, stamp, login, salt):
-        print(ID, opcode, stamp, login, salt)
+        #print(ID, opcode, stamp, login, salt)
         return struct.pack('<8sHQ32s32s', ID, opcode, stamp, login, salt)
 
     def decode(self, data):
@@ -108,6 +108,7 @@ class Stick3Protocol:
         return [file_name, file_end, data_size, file_data]
 
     def decode_zone_status(self, data):
+        _LOGGER.debug('Decoding zone status reply: %s', data.hex())
         (
             stamp,
             zone_id,
@@ -128,7 +129,12 @@ class Stick3Protocol:
         # but I only get =0x0FFFFFFF for N/A
         color_rgb = None if color_rgb == 0x0FFFFFFF else color_rgb
         if color_rgb is not None:
-            color_rgb = color_rgb & 0xFF, (color_rgb >> 8) & 0xFF, (color_rgb >> 16) & 0xFF
+            _LOGGER.debug('Decoding color: %x', color_rgb)
+
+            #color_rgb = color_rgb & 0xFF , (color_rgb >> 8) & 0xFF,(color_rgb >> 16) & 0xFF
+            color_rgb = (color_rgb >> 16) & 0xFF,  (color_rgb >> 8) & 0xFF,color_rgb & 0xFF ,
+            _LOGGER.debug('Decoded color: %s', color_rgb)
+
         color_sat = None if color_sat == 0xFFFF else color_sat  # docs says always 0xFFFF
         extra_color1 = None if extra_color1 == 0xFFFF else extra_color1
         extra_color2 = None if extra_color2 == 0xFFFF else extra_color2

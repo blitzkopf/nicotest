@@ -21,6 +21,10 @@ class Controller:
         self._password = password
         self._protocol = Stick3Protocol()
         self._state = Stick3State()
+        if self._password:
+            self._need_authentication = True
+        else:
+            self._need_authentication = False
 
     # I have not seen the Stick respond on UDP, so we will just fire and forget
     async def send_udp(self, data):
@@ -34,6 +38,8 @@ class Controller:
         self._reader, self._writer = await asyncio.open_connection(self._address, self._tcp_port)
         if self._password:
             self._need_authentication = True
+        else:
+            self._need_authentication = False
         # self.tcp_read_handler = asyncio.create_task(self.tcp_handler())
 
     async def send_tcp(self, data):
@@ -164,8 +170,8 @@ class Controller:
             self._auth_future = None
             fut.set_result(auth_result_code)
 
-    async def start_scene(self, scene_nr, zone_sync_id, dimmer_val, speed_val, color_val):
-        data = self._protocol.scene_trigger_encode(scene_nr, zone_sync_id, 1, dimmer_val, speed_val, color_val)
+    async def start_scene(self, scene_nr, zone_sync_id, dimmer_val, speed_val, color_val, cmd=0x01):
+        data = self._protocol.scene_trigger_encode(scene_nr, zone_sync_id, cmd, dimmer_val, speed_val, color_val)
         # await self.send_udp(data)
         await self.send_tcp(data)
 
@@ -284,6 +290,15 @@ class Controller:
         except KeyError:
             _LOGGER.warning(f"Zone {zone_id} not found")
 
+    async def set_brightness(self, zone_id, brightness):
+        # we need the current to be able to set brightness
+        scene_index = self._state.zone_states[zone_id].running_scene
+        await self.start_scene(scene_index, zone_id, int(brightness), 0, 0,cmd=0x05)
+
+    async def set_rgb_color(self, zone_id, r, g, b):
+        scene_index = self._state.zone_states[zone_id].running_scene
+        await self.start_scene(scene_index, zone_id, 0, 0, (r << 16) + (g << 8) + b,cmd=0x07)
+
     async def read_show_map_file(self):
         file_data = await self.read_file('Show1/show_map.xml')
         root = ET.fromstring(file_data)
@@ -304,3 +319,4 @@ class Controller:
     async def update(self):
         for zone_id in self._state.zones.keys():
             await self.send_query_zone_status(zone_id)
+        return True
